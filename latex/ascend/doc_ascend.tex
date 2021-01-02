@@ -1,0 +1,41 @@
+\documentclass{article}
+\usepackage[margin=4em]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[utf8]{inputenc}
+\usepackage[document]{ragged2e}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage[table]{xcolor}
+\usepackage{gensymb}
+
+\usepackage{amstext} % for \text macro
+\usepackage{array}   % for \newcolumntype macro
+\newcolumntype{C}{>{$}c<{$}} % math-mode version of "l" column type
+
+
+
+
+
+
+\title{KCC - ascent analysis}
+
+\author{Student}
+
+\begin{document}
+	\maketitle
+	\tableofcontents
+
+\section{Physics}
+\begin{align}
+a(t) &= \frac{F(t)}{m(t)}\\
+dm(t) &= \begin{cases}
+0 , \text{   no fuel}\\
+- c_m
+\end{cases}\\
+F &= -\hat{r} \frac{\kappa M}{|r|^3} + F_{aero}\\
+F_{aero} &= -\hat{v} \frac{1}{2} |v|^2 CA \rho
+\end{align}
+
+\end{document}

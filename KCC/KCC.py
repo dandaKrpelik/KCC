@@ -1,5 +1,4 @@
 from CommandCentre import *
-from Missions import *
 
 # initialize the CC thread
 CC = CommandCentre()

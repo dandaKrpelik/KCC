@@ -2,745 +2,632 @@ import os,sys,inspect
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
 sys.path.insert(0,parentdir+'/KCC') 
+sys.path.insert(0,parentdir+'/odyn') 
 
-from KCC import *
-
-class M_measure(Mission):
-	def __init__(self, _vessel):
-		super().__init__(_vessel)
-		self.data = {'t':[], 'pos':[], 'alt':[], 'v_speed':[], 'drag':[], 'dens':[]}	
-		self.t0 = None
-
-	def readData(self,data):
-		data['t'] += [CC.sc.ut - self.t0]
-		data['pos'] += [list(self.currentOrbitPosition())]
-		data['alt'] += [self.flight.surface_altitude]
-		data['v_speed'] += [self.flight.vertical_speed]
-		data['drag'] += [drag_coef(self.flight)]
-		data['dens'] += [self.flight.atmosphere_density]
-			
-	def keep_logging(self,t):
-		t0 = CC.sc.ut
-		while CC.sc.ut - t0 < t:
-			self.readData(self.data)
-			time.sleep(0.1)
-			
-	def while_below_apogee(self, wait_period = 0.1):
-		while (self.flight.vertical_speed > 0):
-			#self.vessel.auto_pilot.target_direction = self.flight.prograde
-			self.target_min_drag()
-			self.readData(self.data)
-			time.sleep(wait_period)
-		print('apogee reached : ', end='')	
-					
-	def run(self):
-		heading = 320
-		vessel = self.Vessel
-
-		vessel.vessel.sas=True
-		vessel.vessel.auto_pilot.engage()
-		vessel.vessel.auto_pilot.target_pitch_and_heading(85, heading)
-		
-		self.t0 = CC.sc.ut
-		self.readData(self.data)
-		vessel.next_stage()
-		print('Launch!')
-		
-		
-		self.keep_logging(2)
-		vessel.vessel.auto_pilot.target_pitch_and_heading(65, heading)
-		self.keep_logging(3)
-		vessel.vessel.auto_pilot.target_pitch_and_heading(35, heading)
-		
-		self.while_below_apogee()
-		vessel.next_stage()
-		
-		self.run_experiments()
-		vessel.next_stage()
-		
-		#vessel.vessel.auto_pilot.disengage()
-		
-		self.keep_retrograde()
-		
-		
-class Leaper_O(Mission):
-	def __init__(self, _vessel):
-		super().__init__(_vessel)
-		self.data = {'t':[], 'pos':[], 'alt':[], 'v_speed':[], 'drag':[], 'dens':[]}	
-		self.t0 = None
-		self.dlogt = 0.1
-
-	def readData(self,data):
-		t = CC.sc.ut
-		
-		if self.t0 is None:
-			self.t0 = t
-		else:
-			if t - data['t'][-1] < self.dlogt : return
-		
-		
-		data['t'] += [CC.sc.ut - self.t0]
-		data['pos'] += [list(self.currentOrbitPosition())]
-		data['alt'] += [self.flight.surface_altitude]
-		data['v_speed'] += [self.flight.vertical_speed]
-		data['drag'] += [drag_coef(self.flight)]
-		data['dens'] += [self.flight.atmosphere_density]
-			
-		self.report()
-			
-	def keep_logging(self,t, wait_period = 0.1):
-		t0 = CC.sc.ut
-		while CC.sc.ut - t0 < t:
-			self.readData(self.data)
-			time.sleep(wait_period)
-			
-	def while_below_apogee(self, wait_period = 0.1, mindrag = False):
-		while (self.flight.vertical_speed > 0):
-			#self.vessel.auto_pilot.target_direction = self.flight.prograde
-			if mindrag: self.target_min_drag()
-			self.readData(self.data)
-			time.sleep(wait_period)
-		print('apogee reached : ', end='')	
-
-	def while_has_fuel(self, wait_period = .1, mindrag = False):
-		while (self.Vessel.engines_have_fuel(self.Vessel.stage-1)):
-			#self.vessel.auto_pilot.target_direction = self.flight.prograde
-			if mindrag: self.target_min_drag()
-			self.readData(self.data)
-			time.sleep(wait_period)
-			
-		print('fuel depleted : ', end='')
-		
-	def report(self):
-		#print('\rtarget dir is '+str(self.vessel.auto_pilot.target_direction), end = '\r')
-		pass
-			
-	def run(self):
-		heading = 90
-		vessel = self.Vessel
-
-		#vessel.vessel.sas=True
-		vessel.vessel.auto_pilot.engage()
-		vessel.vessel.auto_pilot.target_pitch_and_heading(90, heading)
-		
-		self.readData(self.data)
-		vessel.next_stage()
-		print('Launch!')
-		
-		## 1st 4 engines
-		self.keep_logging(10)
-		
-		self.dlogt = 0.5
-		#vessel.vessel.auto_pilot.target_pitch_and_heading(75, heading)
-		self.while_has_fuel( mindrag = False )
-		vessel.next_stage() # decouple
-		
-		## big booster
-		self.dlogt=2
-		vessel.vessel.auto_pilot.target_pitch_and_heading(80, heading)
-		#self.while_below_apogee(1, mindrag=False)
-		vessel.next_stage() # start big booster
-		self.while_has_fuel( mindrag = False )
-		vessel.next_stage()	#	decouple
-		
-		
-		## liquid
-		self.dlogt=10
-		vessel.vessel.auto_pilot.target_direction = self.flight.retrograde
-		self.while_below_apogee(5, mindrag = False)
-		self.run_experiments()
+from Missions import *
+import math
+import Sim
+import debug
 
 
-#		vessel.next_stage()
-		#vessel.vessel.auto_pilot.disengage()
 		
-		self.keep_retrograde()	
+class TakeOffPhase(SingleVesselPhase):
+	##fix?
+	
+	def init(self,miss):
+		Vessel = miss.vessels[ self.ves_name ]
+		v = Vessel.vessel
 		
+		p = AutoPilot(Vessel)
+		p.target_head_ele(self.heading , self.ele )
+		p.throttle(self.thrust)
+		
+		miss.update_pilot(p)
+		print('Launch!!!')
+		Vessel.next_stage()
 
-class Leaper(Mission):
-	def __init__(self, _vessel):
-		super().__init__(_vessel)
-		self.data = {'t':[], 'pos':[], 'alt':[], 'v_speed':[], 'drag':[], 'dens':[]}	
-		self.t0 = None
-		self.dlogt = 0.1
+class BurnFuel(SingleVesselPhase):
+	##fix?
+	decouple_lag = 1
+	stage = True
+	
+		
+	def condition(self,miss):
+		Vessel = miss.vessels[ self.ves_name ]
+		return not Vessel.engines_have_fuel(Vessel.stage-1)
 		
 		
-	def readData(self,data):
-		t = CC.sc.ut
+	def init(self,miss):
+		Vessel = miss.vessels[ self.ves_name ]
 		
-		if self.t0 is None:
-			self.t0 = t
-		else:
-			if t - data['t'][-1] < self.dlogt : return
+		p = miss.pilots[Vessel.name]
+		p.target_head_ele(self.heading, self.ele)
+		p.throttle(self.thrust)
 		
-		
-		data['t'] += [CC.sc.ut - self.t0]
-		data['pos'] += [list(self.currentOrbitPosition())]
-		data['alt'] += [self.flight.surface_altitude]
-		data['v_speed'] += [self.flight.vertical_speed]
-		data['drag'] += [drag_coef(self.flight)]
-		data['dens'] += [self.flight.atmosphere_density]
-			
-		self.report()
-			
-	def keep_logging(self,t, tasks, wait_period = 0.1):
-		print('waiting for '+str(t)+' sec')
-		t0 = CC.sc.ut
-		while CC.sc.ut - t0 < t:
-			
-			for task in tasks:
-				task[0](*task[1])
-			
-			
-			self.readData(self.data)
-			time.sleep(wait_period)
-		print('wait finished')
-			
-	def while_below_apogee(self, tasks, wait_period = 0.1):
-		print('waiting for apoapsis')
-		while (self.flight.vertical_speed > 0):
-			
-			for task in tasks:
-				out = task[0](*task[1])
-				if out:
-					CC.KSPconnection.drawing.add_direction(out , self.vessel.surface_reference_frame )
-					CC.KSPconnection.drawing.add_direction(out , self.orbit.body.reference_frame )
-				
-			
-			self.readData(self.data)
-			time.sleep(wait_period)
-		print('apogee reached : ', end='')	
-
-	def while_general(self, condition, tasks, wait_period = .1 , info=None):
-		if info is None: info = 'general condition '+str(condition)
-		print(info)
-		while(condition()):
-			for task in tasks:
-				out = task[0](*task[1])	
-			self.readData(self.data)
-			time.sleep(wait_period)
-		print('general condition finished')							
-
-	def while_has_fuel(self, tasks, wait_period = .1):
 		print('burning all fuel in stage')
-		while (self.Vessel.engines_have_fuel(self.Vessel.stage-1)):
-			
-			for task in tasks:
-				task[0](*task[1])
-			
-			self.readData(self.data)
-			time.sleep(wait_period)
-			
-		print('fuel depleted : ', end='')
 		
-	def while_resource( self, tag , tasks , lim = 0 , wait_period = 0.1 ):
-		start_val = self.Vessel.vessel.resources.amount(tag)
-		print('burning '+tag+' until '+str(lim*100)+'%%  .. ie %.1f from %.1f' % (lim*start_val , start_val))
-		
-		while (self.Vessel.vessel.resources.amount(tag)/start_val > lim):
+	def end(self,miss):
+		if self.stage:
+			Vessel = miss.vessels[ self.ves_name ]
 			
-			for task in tasks:
-				task[0](*task[1])
-			
-			self.readData(self.data)
-			time.sleep(wait_period)
-			
-		print(tag + ' down on '+str(lim*100)+'%')				
-			
-		
-	def set_auto_direction(self, symdir):
-		
-		#self.sync_AP_ref_frame()
-		
-		if symdir == 'prograde':
-			self.Vessel.vessel.auto_pilot.target_direction = CC.sc.transform_direction( 
-					self.flight.prograde, 
-					self.orbit.body.reference_frame,
-					self.vessel.surface_reference_frame
-					)
-		elif symdir == 'retrograde':
-			self.Vessel.vessel.auto_pilot.target_direction =  CC.sc.transform_direction( 
-					self.flight.retrograde,
-					self.orbit.body.reference_frame,
-					self.vessel.surface_reference_frame
-					)
-		elif symdir == 'radial':
-			self.Vessel.vessel.auto_pilot.target_direction =  CC.sc.transform_direction( 
-					self.flight.radial,
-					self.orbit.body.reference_frame,
-					self.vessel.surface_reference_frame
-					)
-		elif symdir == 'normal':
-			self.Vessel.vessel.auto_pilot.target_direction =  CC.sc.transform_direction( 
-					self.flight.normal,
-					self.orbit.body.reference_frame,
-					self.vessel.surface_reference_frame
-					)
-		
-	def report(self):
-		#print('\rtarget dir is '+str(self.vessel.auto_pilot.target_direction), end = '\r')
-		pass
-			
-	def run_O(self):
-		heading = 170
-		vessel = self.Vessel
+			p = miss.pilots[Vessel.name]
+			p.throttle(0)
+			time.sleep( self.decouple_lag )
+			Vessel.next_stage()
+			time.sleep( self.decouple_lag )
+			p.throttle(self.thrust)
 
-		#vessel.vessel.sas=True
-		vessel.vessel.auto_pilot.engage()
-		vessel.vessel.auto_pilot.target_pitch_and_heading(90, heading)
-		
-		self.readData(self.data)
-		vessel.next_stage()
-		print('Launch!')
-		
-		## 1st 4 engines
-		self.keep_logging(5,[])
-		
-		self.dlogt = 0.5
-		#vessel.vessel.auto_pilot.target_pitch_and_heading(75, heading)
-		self.while_has_fuel( [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (88, heading) ]] )
-		
-		self.keep_logging(2,[])
-		
-		vessel.next_stage() # decouple
-		
-		self.keep_logging(5,[])
-		## big booster
-		self.dlogt=2
-		vessel.next_stage() # start big booster
-		self.keep_logging(2,[])
-		
-	#	self.while_resource( 'SolidFuel' , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (80, heading) ]] , 0.8, 5 )
-	#	self.while_resource( 'SolidFuel' , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (70, heading) ]] , 0.6, 5 )
-	#	self.while_resource( 'SolidFuel' , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (60, heading) ]] , 0.3, 5 )
-	#	self.while_has_fuel( [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (50, heading) ]] )
-		self.while_has_fuel( [[ self.target_min_drag , () ]] )
-		vessel.next_stage()	#	decouple
-		
-		
-		## liquid
-		self.keep_logging(1,[])
-		start_fuel = vessel.vessel.resources.amount('LiquidFuel')
-		self.dlogt=10
-		vessel.vessel.control.throttle = .1
-		vessel.next_stage() # start the engine
-		self.while_resource( 'LiquidFuel' , [[ self.set_auto_direction , ('prograde',) ]] , 0.5, 5 )
-		vessel.vessel.control.throttle = 0
-		
-		#vessel.vessel.auto_pilot.target_direction = self.flight.retrograde
-		self.while_below_apogee( [[ self.set_auto_direction , ('retrograde',) ]], 5)
-		self.run_experiments()
-
-
-		#vessel.next_stage()
-		self.keep_retrograde()	
+class ReachApoapsis(SingleVesselPhase):
+	flight = None
+	stage = True
 	
-	def run(self):
-		heading = 170
-		vessel = self.Vessel
-
-		#vessel.vessel.sas=True
-		vessel.vessel.auto_pilot.engage()
-		vessel.vessel.auto_pilot.target_pitch_and_heading(90, heading)
-		
-		self.readData(self.data)
-		vessel.next_stage()
-		print('Launch!')
-		
-		## 1st 4 engines and main
-		self.keep_logging(5,[])
-		
-		self.dlogt = 0.5
-		#vessel.vessel.auto_pilot.target_pitch_and_heading(75, heading)
-		self.while_has_fuel( [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (80, heading) ]] )
-		
-		self.keep_logging(2,[])
-		
-		vessel.next_stage() # decouple 4
-		
-		self.keep_logging(5,[])
-		## big booster
-		self.dlogt=2
-		#vessel.next_stage() # start big booster (ALREADY RUNNING)
-		self.keep_logging(2,[])
-		
-	#	self.while_resource( 'SolidFuel' , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (80, heading) ]] , 0.8, 5 )
-	#	self.while_resource( 'SolidFuel' , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (70, heading) ]] , 0.6, 5 )
-	#	self.while_resource( 'SolidFuel' , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (60, heading) ]] , 0.3, 5 )
-	#	self.while_has_fuel( [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (50, heading) ]] )
-		
-		#self.while_has_fuel( [[ self.target_min_drag , () ]] )
-		self.while_has_fuel( [[ self.set_auto_direction , ('prograde',) ]] )
-		vessel.next_stage()	#	decouple
-		
-		
-		## liquid
-		self.keep_logging(1,[])
-		start_fuel = vessel.vessel.resources.amount('LiquidFuel')
-		self.dlogt=10
-		vessel.vessel.control.throttle = .1
-		vessel.next_stage() # start the engine
-		self.while_resource( 'LiquidFuel' , [[ self.set_auto_direction , ('prograde',) ]] , 0.5, 5 )
-		vessel.vessel.control.throttle = 0
-		
-		#vessel.vessel.auto_pilot.target_direction = self.flight.retrograde
-		self.while_below_apogee( [[ self.set_auto_direction , ('retrograde',) ]], 5)
-		self.run_experiments()
-
-
-		#vessel.next_stage()
-		#self.keep_retrograde()	
-		self.keep_logging(1,[[self.set_auto_direction, ('retrograde',)]])
-
-
-class Higher(Leaper):
-			
-	def run(self):
-		heading = 170
-		vessel = self.Vessel
-
-		#vessel.vessel.sas=True
-		vessel.vessel.auto_pilot.engage()
-		vessel.vessel.auto_pilot.target_pitch_and_heading(90, heading)
-		
-		self.readData(self.data)
-		vessel.next_stage()
-		print('Launch!')
-		
-		## 1st 4 engines
-		self.keep_logging(5,[])
-		
-		self.dlogt = 0.5
-		#vessel.vessel.auto_pilot.target_pitch_and_heading(75, heading)
-		self.while_has_fuel( [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (88, heading) ]] )
-		
-		self.keep_logging(2,[])
-		
-		vessel.next_stage() # decouple
-		
-		self.keep_logging(5,[[ self.target_min_drag , () ]])
-		## big booster
-		self.dlogt=2
-		vessel.next_stage() # start big booster
-		self.keep_logging(2,[[ self.target_min_drag , () ]])
-		
-	#	self.while_resource( 'SolidFuel' , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (80, heading) ]] , 0.8, 5 )
-	#	self.while_resource( 'SolidFuel' , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (70, heading) ]] , 0.6, 5 )
-	#	self.while_resource( 'SolidFuel' , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (60, heading) ]] , 0.3, 5 )
-	#	self.while_has_fuel( [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (50, heading) ]] )
-		self.while_has_fuel( [[ self.target_min_drag , () ]] )
-		vessel.next_stage()	#	decouple
-		
-		
-		## liquid
-		self.keep_logging(1,[[ self.target_min_drag , () ]])
-		start_fuel = vessel.vessel.resources.amount('LiquidFuel')
-		self.dlogt=10
-		vessel.vessel.control.throttle = .1
-		vessel.next_stage() # start the engine
-		self.while_resource( 'LiquidFuel' , [[ self.set_auto_direction , ('prograde',) ]] , 0.2, 5 )
-		vessel.vessel.control.throttle = 0
-		
-		#vessel.vessel.auto_pilot.target_direction = self.flight.retrograde
-		self.while_below_apogee( [[ self.set_auto_direction , ('retrograde',) ]], 5)
-		self.run_experiments()
-
-
-		#vessel.next_stage()
-		self.keep_retrograde()	
-		
-class Moon(Leaper):## ship - orbiter2
-	def run(self):
-		heading = 90
-		vessel = self.Vessel
-
-		#vessel.vessel.sas=True
-		vessel.vessel.auto_pilot.engage()
-		vessel.vessel.auto_pilot.target_pitch_and_heading(80, heading)
-		vessel.vessel.control.throttle = .6
-		
-		self.readData(self.data)
-		vessel.next_stage()
-		print('Launch!')
-		
-		## 1st 2 engines and main
-		self.keep_logging(5,[])
-		
-		self.dlogt = 0.5
-		#vessel.vessel.auto_pilot.target_pitch_and_heading(75, heading)
-		self.while_has_fuel( [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (65, heading) ]] )
-		
-		self.keep_logging(2,[])
-		
-		vessel.next_stage() # decouple 4
-		
-		self.keep_logging(5,[])
-		## big booster
-		self.dlogt=2
-		#vessel.next_stage() # start big booster (ALREADY RUNNING)
-		self.keep_logging(2,[])
-		
-		start_fuel = vessel.vessel.resources.amount('LiquidFuel')
-		self.dlogt=5
-		vessel.vessel.control.throttle = .5
-		
-		self.while_resource( 'LiquidFuel' , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (45, heading) ]] , 0.8, 5 )
-		self.while_resource( 'LiquidFuel' , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (25, heading) ]] , 0.1, 5 )
-		vessel.vessel.control.throttle = .1
-		self.while_has_fuel( [[ self.set_auto_direction , ('prograde',) ]] , 5)
-		vessel.next_stage()	#	decouple
-		vessel.vessel.control.throttle = 0
-		
-
-		
-		#vessel.vessel.auto_pilot.target_direction = self.flight.retrograde
-		self.while_below_apogee( [[ self.set_auto_direction , ('prograde',) ]], 5)
-		
-		
-		
-		
-		### land
-		self.while_has_fuel( [[ self.set_auto_direction , ('retrograde',) ]] )
-		
-		vessel.next_stage()
-		vessel.next_stage()#chute
-		self.keep_logging(1,[[self.set_auto_direction, ('retrograde',)]])
-
-		
-class Satellite(Leaper):## ship - orbiter-sat
-	def run(self):
-		heading = 90
-		vessel = self.Vessel
-
-		#vessel.vessel.sas=True
-		
-		vessel.vessel.auto_pilot.engage()
-		#vessel.vessel.auto_pilot.overshoot = (.001,.001,.01)
-		vessel.vessel.auto_pilot.target_pitch_and_heading(88, heading)
-		vessel.vessel.control.throttle = 0.5
-		
-		self.readData(self.data)
-		vessel.next_stage()
-		print('Launch!')
-		
-		## 1st 2 engines and main
-		self.keep_logging(5,[])
-		
-		self.dlogt = 0.5
-		#vessel.vessel.auto_pilot.target_pitch_and_heading(75, heading)
-		
-		
-		vessel.vessel.auto_pilot.target_pitch_and_heading(86, heading)
-		self.keep_logging( 5, [])
-		vessel.vessel.auto_pilot.target_pitch_and_heading(84, heading)
-		self.keep_logging( 10, [])
-		vessel.vessel.auto_pilot.target_pitch_and_heading(82, heading)
-		self.keep_logging( 10, [])
-		vessel.vessel.auto_pilot.target_pitch_and_heading(80, heading)
-		self.keep_logging( 10, [])
-		self.while_has_fuel( [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (78, heading) ]] )
-		#self.while_has_fuel( [[ self.set_auto_direction , ('prograde',) ]] )
-		
-		#self.keep_logging(1,[])
-		
-		self.keep_logging(1,[])
-		vessel.vessel.control.throttle = 1
-		self.keep_logging(1,[])
-		vessel.next_stage() # decouple 4
-		self.keep_logging(2,[])
-		
-		vessel.vessel.auto_pilot.target_pitch_and_heading(65, heading)
-		vessel.vessel.control.throttle = 0.01
-		self.keep_logging(1,[])
-		
-		cond = lambda : vessel.vessel.auto_pilot.error > 25
-		self.while_general( cond , [])
-				
-		## raise apoapsis
-		vessel.vessel.control.throttle = .5
-		self.keep_logging(2,[])
-		cond = lambda : self.orbit.apoapsis_altitude < 80000
-		self.while_general( cond , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (35, heading) ]] , 1)
-		vessel.vessel.control.throttle = 0
-		
-		##raise periapsis
-		vessel.vessel.control.throttle = .2
-		cond = lambda : self.orbit.periapsis_altitude < 80000
-		#self.while_general( cond , [[ self.set_auto_direction , ('prograde',) ]] , 1)
-		self.while_general( cond , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (5, heading) ]] , 1)
-		vessel.vessel.control.throttle = 0
-		
-		
-		
-		#~ ### land
-		#~ vessel.vessel.control.throttle = 0.1
-		#~ self.while_has_fuel( [[ self.set_auto_direction , ('normal',) ]] )
-		
-		#~ vessel.next_stage()
-		
-		#~ self.keep_logging(10,[[self.set_auto_direction , ('radial',) ]])
-		#~ self.vessel.auto_pilot.disengage()
-		
-class Plane(Leaper):
-	def run(self):
-		self.flight = self.vessel.flight(self.vessel.surface_reference_frame)
-		
-		heading_def = 90#def
-		heading = 150
-		vessel = self.Vessel
-		#vessel.vessel.control.input_mode = CC.sc.ControlInputMode(1)
-		
-		vessel.vessel.auto_pilot.engage()
-		#vessel.vessel.auto_pilot.target_pitch_and_heading(-5, heading_def)
-		#vessel.vessel.auto_pilot.target_heading = heading_def
-		vessel.vessel.control.throttle = 1
-		
-		self.readData(self.data)
-		vessel.next_stage()
-		print('Launch!')
-		#vessel.vessel.control.pitch = 0.1
-		self.keep_logging(5, [])
-		
-		
-		
-		
-		cond = lambda : self.flight.speed < 100
-		self.while_general( cond , [[ self.set_auto_direction , ('prograde',) ]] )
-		
-		
-		
-		## take-off
-		
-		cond = lambda : self.flight.pitch < 10
-		vessel.vessel.control.pitch = 1
-		self.while_general( cond, [] , 0.02)
-		
-		
-		## take-off
-		vessel.vessel.auto_pilot.engage()
-		vessel.vessel.auto_pilot.target_pitch = 15
-		vessel.vessel.auto_pilot.target_heading = heading_def
-		self.keep_logging(15, [] )
-		
-		vessel.vessel.auto_pilot.target_pitch = 45
-		vessel.vessel.auto_pilot.target_heading = heading
-		
-		cond = lambda : self.flight.elevation < 6000
-		self.while_general( cond, [] )
-		
-		vessel.vessel.auto_pilot.target_pitch_and_heading(5,heading)
-		
-class LongPlane(Leaper):
-	def run(self):
-		self.flight = self.vessel.flight(self.vessel.surface_reference_frame)
-		
-		heading_def = 90#def
-		heading = 150
-		vessel = self.Vessel
-		vessel.vessel.auto_pilot.engage()
-		vessel.vessel.auto_pilot.target_pitch_and_heading(90, heading_def)
-		vessel.vessel.control.throttle = 1
-		
-		self.readData(self.data)
-		vessel.next_stage()
-		print('Launch!')
-		self.keep_logging(5, [])
-		self.while_has_fuel( [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (85, heading_def) ]] )
-		
-		vessel.next_stage()
-		
-		## raise apoapsis
-		vessel.vessel.control.throttle = 1
-		cond = lambda : self.orbit.apoapsis_altitude < 15000
-		self.while_general( cond , [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (65, heading_def) ]] , 1)
-		
-		self.while_has_fuel( [[ vessel.vessel.auto_pilot.target_pitch_and_heading , (5, heading) ]] )
-		vessel.next_stage()
-		
-		self.while_below_apogee( [], 2)
-		
-		vessel.next_stage()
-		
-		self.keep_logging( 100, [] )
-
-#miss = Leaper(CC.sc.active_vessel)
-#miss = Higher(CC.sc.active_vessel)
-#miss = Moon(CC.sc.active_vessel)
-miss = Satellite(CC.sc.active_vessel)
-#miss = Plane(CC.sc.active_vessel)
-#miss = LongPlane(CC.sc.active_vessel)
-
-
-
-
-class Sim:
-	def __init__(self, m0, m1, dm, T):
-		self.m = m0
-		self.mlim = m1
-		self.dm = dm
-		self.T = T
-		
-	def sim(self, AC, ts, denss):
-		tprev = 0
-		
-		T = self.T
-		M = self.m
-		
-		h = 0
-		v = 0
-		
-		out = []
-		for i in range(len(ts)):
-			dt = ts[i] - tprev
-			
-			if M < self.mlim : T = 0
-			
-			F = T - AC*v*denss[i]
-			a = F/M - 9.81
-			
-			dv = a*dt
-			dh = v*dt
-			
-			h += dh
-			v += dv
-			
-			if T > 0: M -= self.dm*dt
-			
-			out += [h]
-			
-			tprev = ts[i]
-		
-		return out
-
-
-
-def stopData():
-	dt = miss.data['t'].copy()
-	dh = miss.data['alt'].copy()
-	dd = miss.data['dens'].copy()
+	def condition(self, miss):
+		Vessel = miss.vessels[ self.ves_name ]
+		return self.flight.vertical_speed < 0 or Vessel.vessel.orbit.time_to_apoapsis < self.dt
 	
+	def __init__(self, name, dt = 0):
+		SingleVesselPhase.__init__(self,name)
+		self.dt = dt
+		
+	def init(self, miss):
+		Vessel = miss.vessels[ self.ves_name ]
+		v = Vessel.vessel
+		
+		self.flight = v.flight(v.orbit.body.reference_frame)
+		
+		p = miss.pilots[Vessel.name]
+		p.target_roll(0)
+		#p.set_reference_frame(v.orbital_reference_frame)
+		#p.target_head_ele(self.heading, self.ele)
+		p.target_orbital_dir('prograde')
+
+	def end(self, miss):
+		if self.stage:
+			Vessel = miss.vessels[ self.ves_name ]
+			Vessel.next_stage()
+
+class RaiseOrbit(SingleVesselPhase):
+	sign = 1
+	target_dir = 'prograde'
+	roll = 0
+	
+	def __init__(self, name, tag = 'apoapsis', height = 80000):
+		SingleVesselPhase.__init__(self,name)
+		
+		assert tag in ['apoapsis','periapsis']
+		self.tag = tag
+		self.height = height
+		
+		if height < 0 :
+			#self.height =  -height
+			self.sign = -1
+			self.target_dir = 'retrograde'
+		
+	def condition(self, miss):
+		orbit = miss.vessels[ Vessel.name ].vessel.orbit
+		return self.sign * orbit.__getattribute__(self.tag+'_altitude') > self.height
+		
+	def init(self, miss):
+		Vessel = miss.vessels[ self.ves_name ]
+		v = Vessel.vessel
+		
+		p = miss.pilots[Vessel.name]
+		p.engage()
+		if not self.target_dir is None:
+			p.update_reference_frame(v.orbital_reference_frame)
+			p.target_orbital_dir( self.target_dir )
+		
+		p.throttle(self.thrust)
+		
+	def end(self,miss):
+		Vessel = miss.vessels[ self.ves_name ]
+		v = Vessel.vessel
+		p = miss.pilots[Vessel.name]
+		p.throttle(0)
+
+class DescentOnLevelPhase(SingleVesselPhase):
+	flight = None
+	height = 0
+	roll = 0
+	
+	def condition(self, miss):
+		flight = miss.vessels[self.ves_name].vessel.flight( miss.pilots[self.ves_name].ap )
+		return flight.surface_altitude <= self.height
+
+	def init(self,miss):
+		Vessel = miss.vessels[ self.ves_name ]
+		v = Vessel.vessel
+		
+		p = miss.pilots[Vessel.name]
+		p.update_reference_frame(v.orbital_reference_frame)
+		p.target_orbital_dir('retrograde')
+		
+		p.throttle(self.thrust)		
+		
+
+class FinalDescentPhase(DescentOnLevelPhase):
+	roll = 0
+	
+	## add condition
+	def init(self, miss):
+		DescentOnLevelPhase.init(self,miss)
+		
+		Vessel = miss.vessels[ self.ves_name ]
+		v = Vessel.vessel
+		
+		p = miss.pilots[Vessel.name]
+		
+		p.update_reference_frame(v.surface_reference_frame)
+		p.target_orbital_dir('retrograde')
+		
+		p.throttle(self.thrust)		
+	
+## airplane	
+class aTakeOffPhase(SingleVesselPhase):
+	##fix?
+	dt = 10
+	
+	def condition(self,miss):
+		### velocity -> lift
+		
+		ts = miss.data_log['t']
+		return ts[-1] - ts[0] > self.dt
+		
+	def init(self,miss):
+		Vessel = miss.vessels[ self.ves_name ]
+		v = Vessel.vessel
+		
+		p = miss.pilots[ self.ves_name]
+		p.throttle(self.thrust)
+		
+		p.deactivate()
+		v.sas = True
+		
+		print('Launch!!!') 
+		Vessel.next_stage()		
+	
+
+	
+def getLeapMission( target = '' ):
+	## Arrow-SH-1
+	print('mission - target '+str(target))
+	
+	miss = Mission()
+	miss.add_vessel( Vessel(CC.sc.active_vessel) )
+	
+	v = miss.vessels['main'].vessel
+	v.auto_pilot.reference_frame = v.surface_reference_frame
+	
+	
+	
+	heading = 180
+	p1 = TakeOffPhase('take off'); p1.heading = heading
+	
+	p1.heading = heading
+	p1.sas = True
+	p1.ele = 85
+	p1.thrust = 1
+	#p1.dt = 30###
+	miss.add_phase( p1 )
+	
+	p2 = BurnFuel('burn boosters')
+	p2.sas=True
+	p2.heading = heading
+	p2.ele = 80
+	p2.thrust = 1
+	miss.add_phase( p2 )
+	
+	##replace pilot
+	new_pilot = AutoPilot(miss.vessels['main'])
+	
+	for w in CC.sc.waypoint_manager.waypoints:
+		if w.name == target:
+			new_pilot.target = ( w.latitude, w.longitude )
+			new_pilot.track = True
+			print('target found!')
+	
+	
+	class AdjustPilot(SingleVesselPhase):
+		def init(self, miss):
+			miss.update_pilot(new_pilot)
+			new_pilot.engage()
+			new_pilot.target_elevation(65)
+
+	c1 = AdjustPilot('adjust direction')
+	c1.thrust = 1
+	miss.add_phase(c1)
+	
+	
+	
+	p3 = BurnFuel('burn liquid')
+	p3.ele = 25
+	p3.heading = heading
+	p3.thrust = 0.8
+	p3.stage = False
+	miss.add_phase( p3 )
+	
+	
+	
+	
+	p4 = ReachApoapsis('wait for apogee')
+	p4.heading = heading
+	p4.ele = 15
+	p4.stage = False
+	miss.add_phase( p4 )
+
+	#~ p4 = RaiseOrbit('reaching testing height', height = 105000)
+	#~ p4.target_dir = None
+	#~ p4.thrust = 1
+	#~ miss.add_phase(p4)
+	
+	#~ pp = ReachApoapsis('awit for apo')
+	#~ miss.add_phase(pp)
+	
+	p5 = BurnFuel('glide')
+	p5.ele = 15
+	p5.heading = heading
+	p5.thrust = 0.3
+	miss.add_phase(p5)
+	
+	
+	return miss
+	
+def getLongLeapMission():
+	## orbiter-tourist-s
+	miss = Mission()
+	miss.add_vessel( Vessel(CC.sc.active_vessel) )
+	
+	v = miss.vessels['main'].vessel
+	v.auto_pilot.reference_frame = v.surface_reference_frame
+	
+	heading = 90
+	p1 = TakeOffPhase('take off'); p1.heading = heading
+	p1.heading = heading
+	p1.ele = 85
+	p1.thrust = 1
+	miss.add_phase( p1 )
+	
+	p2 = BurnFuel('burn boosters')
+	p2.heading = heading
+	p2.ele = 88
+	p2.thrust = 0.6
+	miss.add_phase( p2 )
+	
+	class AdjustPilot(SingleVesselPhase):
+		def init(self, miss):
+			p = miss.pilots['main']
+			p.target_roll = 0
+			p.target_head_ele(heading, 80)
+			p.throttle(self.thrust)
+			p.engage()
+
+	c1 = AdjustPilot('adjust direction')
+	c1.thrust = 0.2
+	miss.add_phase(c1)
+
+	c2 = SingleVesselPhase('wait')
+	c2.dt = 10
+	c2.ele = 75
+	miss.add_phase(c2)
+	
+	p3 = RaiseOrbit('raise apogee', 'apoapsis', 100000)
+	p3.thrust = 1
+	miss.add_phase( p3 )
+	
+	p4 = ReachApoapsis('wait for apogee', dt = 10)
+	p4.stage = False
+	miss.add_phase( p4 )
+	
+	return miss	
+
+def getOrbitMission(height = 150e3):
+	## orbiter-tourist-s
+	## orbiter-base
+	
+	## orbiter - S
+	miss = Mission()
+	miss.add_vessel( Vessel(CC.sc.active_vessel) )
+	
+	v = miss.vessels['main'].vessel
+	v.auto_pilot.reference_frame = v.surface_reference_frame
+	
+	heading = 340
+	roll = 0
+	
+	p1 = TakeOffPhase('take off')
+	p1.heading = heading
+	p1.ele = 90
+	p1.thrust = 1
+	miss.add_phase( p1 )
+	
+	p2 = BurnFuel('burn boosters')
+	p2.heading = heading
+	p2.ele = 85
+	p2.thrust = 1
+	miss.add_phase( p2 )
+	
+	c2 = SingleVesselPhase('wait')
+	c2.sas = True
+	c2.dt = 25
+	c2.thrust = 1
+	miss.add_phase(c2)
+	
+	p3 = RaiseOrbit('raise apogee', 'apoapsis', height)
+	#p3.sas = True
+	p3.thrust = 1
+	miss.add_phase( p3 )
+	
+	dt = 35
+	p4 = ReachApoapsis('wait for apogee', dt = dt)
+	p4.stage = False
+	miss.add_phase( p4 )
+	
+	p5 = RaiseOrbit('raise periapsis', 'periapsis', height)
+	p5.thrust = 1
+	miss.add_phase(p5)
+	
+
+	return miss
+	
+def getLandMission():
+	## orbiter-tourist-s
+	miss = Mission()
+	miss.add_vessel( Vessel(CC.sc.active_vessel) )
+	
+	v = miss.vessels['main'].vessel
+	v.auto_pilot.reference_frame = v.orbital_reference_frame
+	
+	p0 = RaiseOrbit('slow down','periapsis', -500)
+	p0.thrust = 0.1
+	miss.add_phase(p0)
+	
+	p1 = DescentOnLevelPhase('descent-1')
+	p1.height = 10000
+	p1.thrust = 0
+	miss.add_phase( p1 )
+	
+	
+	p2 = FinalDescentPhase('descent-x')
+	p2.thrust = 0.1
+	miss.add_phase( p2 )
+		
+	return miss
+	
+def getLongPlaneMission(destination = None):
+	## muchacho-L-1
+	miss = Mission()
+	miss.add_vessel( Vessel(CC.sc.active_vessel) )
+	
+	heading = 90
+	p1 = TakeOffPhase('take off'); p1.heading = heading
+	p1.heading = heading
+	p1.ele = 85
+	p1.thrust = 1
+	p1.dt=5
+	miss.add_phase( p1 )
+	
+	p2 = BurnFuel('burn boosters')
+	p2.heading = heading
+	p2.ele = 80
+	p2.thrust = 0.8
+	miss.add_phase( p2 )	
+
+	#~ class AdjustPilot(SingleVesselPhase):
+		#~ def init(self, miss):
+			#~ p = miss.pilots['main']
+			#~ p.target_roll = 0
+			#~ p.target_head_ele(heading, 80)
+			#~ p.throttle(self.thrust)
+			#~ p.engage()
+
+	#~ c1 = AdjustPilot('adjust direction')
+	#~ c1.thrust = 0.2
+	#~ miss.add_phase(c1)
+
+	#~ c2 = SingleVesselPhase('wait')
+	#~ c2.dt = 10
+	#~ c2.ele = 70
+	#~ miss.add_phase(c2)
+
+	p3 = BurnFuel('burn liquid')
+	p3.ele = 55
+	p3.heading = heading
+	p3.thrust = 0.8
+	miss.add_phase( p3 )
+	
+	p4 = ReachApoapsis('wait for apogee')
+	p4.heading = heading
+	p4.ele = 15
+	miss.add_phase( p4 )	
+
+
+	return miss
+	
+class DataMission(Mission):
+	log_keys = ['t', 'alt', 'alt_o',
+			'atmo_dens', 'velocity', 'aoa',
+			'drag', 'drag_coef', 'aero',
+			'aero_coef', 'mass', 'thrust', 'isp' ,
+			'o_speed', 'o_dir', 's_dir', 's_head']
+	def log_data(self):
+		data = self.data_log
+		v = self.vessels['main']
+		
+		data['alt_o'] += [v.altitude]
+		data['alt'] += [v.altitude - data['alt_o'][0] ]
+		
+		data['drag'] += [np.linalg.norm(v.drag)]
+		data['drag_coef'] += [v.drag_coef]
+		
+		data['aero'] += [np.linalg.norm(v.aero)]
+		data['aero_coef'] += [v.aero_coef]
+		
+		data['atmo_dens'] += [v.atmo_dens]
+		data['velocity'] += [v.velocity]		
+		data['aoa'] += [ v.aoa ]
+		
+		data['mass'] += [v.mass]
+		data['thrust'] += [v.thrust]
+		data['isp'] += [v.isp]
+		
+		data['o_speed'] += [v.orbital_speed]
+		data['o_dir'] += [v.orbit_heading]
+		data['s_dir'] += [v.surface_dir]
+		data['s_head'] += [v.surface_heading]
+	
+def getObserveFlightMission(orbit_height = 150e3, launch_heading=90):
+	miss = DataMission()
+	miss.add_vessel( Vessel(CC.sc.active_vessel) )
+	
+	heading = launch_heading
+	height = orbit_height
+	
+	p1 = TakeOffPhase('take off');
+	p1.heading = heading
+	p1.ele = 80
+	p1.thrust = 1
+	#p1.dt=5
+	miss.add_phase( p1 )
+	
+	p2 = BurnFuel('burn boosters')
+	p2.heading = heading
+	p2.ele = 70
+	p2.thrust = 1
+	miss.add_phase( p2 )	
+
+
+	c2 = SingleVesselPhase('wait')
+	c2.sas = True
+	c2.dt=15
+	c2.thrust = 1
+	miss.add_phase(c2)
+
+	miss.addq_change_update_time(1)
+	
+	p3 = RaiseOrbit('raise apogee', 'apoapsis', height)
+	#p3.sas = True
+	p3.thrust = 1
+	#p3.ele = 65
+	miss.add_phase( p3 )
+	
+	miss.addq_change_update_time(5)
+		
+	dt = 35
+	p4 = ReachApoapsis('wait for apogee', dt = dt)
+	p4.thrust = 0
+	p4.stage = False
+	miss.add_phase( p4 )
+	
+	miss.addq_change_update_time(1.5)
+	
+	p5 = RaiseOrbit('raise periapsis', 'periapsis', height)
+	p5.thrust = 1
+	miss.add_phase(p5)
+	
+	miss.addq_stop_updates()
+	
+	return miss
+	
+if __name__ == '__main__':
+		
+	#~ miss = getLeapMission()
+
+	#~ miss.phases['burn boosters'].stage = False
+	#~ miss.phases['burn liquid'].stage = False
+
+	#~ #orbit and land
+	#~ miss = getOrbitMission(height = 250e3)
+	#~ land = getLandMission()
+	#~ for p in land.phases:
+		#~ miss.add_phase( land.phases[p] )
+		
+	#~ destination = None
+	#~ #miss = getLongPlaneMission(destination)
+	#~ miss = getLongLeapMission()
+
+
+	#miss = getLeapMission( target = 'Zone 27-L3' )
+
+	miss = getObserveFlightMission()
+	#~ land = getLandMission()
+	#~ for p in land.phases:
+		#~ miss.add_phase( land.phases[p] )
+
+
+def show_data_log(miss,tag):
 	plt.figure()
-	plt.plot(dt,dh)
+	plt.plot(miss.data_log['t'], miss.data_log[tag])
+	plt.ylabel = tag
+	plt.xlabel = 'time(s)'
+	
 	plt.show(0)
-	
-	
-	#~ testA = np.linspace(1,150,300)
-	#~ valsA = np.zeros_like(testA)
-	#~ valsRef = np.array(dh)
-	
-	#~ s = Sim(3500,1800,118,197000)
-	
-	#~ for i in range(len(testA)):
-		#~ pred = s.sim(testA[i],dt,dd)
-		#~ valsA[i] = np.average(np.abs(pred-valsRef))
-	
-	#~ plt.figure()
-	#~ plt.plot(testA, valsA)
-	#~ plt.show(0)
 
-	#~ plt.figure()
-	#~ pred = s.sim(65,dt,dd)
-	#~ plt.plot(dt,pred)
-	#~ plt.show(0)
 
-	#~ return testA, valsA
+def showDataDisplay(miss, offset = 10):
+	tags1 = ['alt', 'atmo_dens', 'velocity', 'aoa', 'drag_coef',  'aero_coef', 'mass', 'thrust', 'isp' ]
+	tags2 = ['alt', 'atmo_dens', 'velocity',  'aero', 'mass', 'thrust', 'isp' ]
+	tags3 = ['alt', 'o_speed', 'o_dir', 's_dir', 's_head' ]
+	
+	tgs = [tags1, tags2, tags3]
+	nts = [len(t) for t in tgs]
+	figs = []
+	
+	for tags in tgs:
+		figs += [plt.figure()]
+		
+	while(True):
+		t = miss.data_log['t']
+		for i in range(len(tgs)):
+			tags = tgs[i]
+			nt = nts[i]
+			fig = figs[i]
+			
+			fig.clf()
+			
+		
+			cnt = 0
+			for tag in tags:
+				cnt += 1
+				spl = '%d%d%d' % (nt,1,cnt)
+				ax = fig.add_subplot(spl)
+			
+			
+				N = min(len(t),len(miss.data_log[tag]))
+				if N < offset: continue
+			
+			
+				ax.plot( t[offset:N] , miss.data_log[tag][offset:N])
+				ax.set_ylabel(tag)
+			
+		plt.xlabel = 'time(s)'
+		plt.show(block = False)
+		
+		plt.pause(1)
+	
+def endAndLog(miss, fname = 'default'):
+	miss.disengage()
+	import csv
+	
+	tags = ['alt', 'atmo_dens', 'velocity', 'aoa', 'drag', 'drag_coef', 'aero', 'aero_coef', 'mass', 'thrust', 'isp', 'o_speed' ]
+	tagsv = ['o_dir', 's_dir', 's_head']
+	nt = len(tags)
+	
+	Ns = [len(miss.data_log['t'])]
+	Ns += [ len(miss.data_log[tag]) for tag in tags ] 
+	N = min(Ns)
+	
+	with open('data/'+fname+'.csv','w') as f:
+		w = csv.writer(f)
+		names = ['t'] + tags
+		for vt in tagsv:
+			names += ['%s_%d' % (vt,i+1) for i in range(3)]
+			
+		w.writerow(names)
+		for i in range(N):
+			row = [miss.data_log['t'][i]]
+			row += [ miss.data_log[tag][i] for tag in tags ]
+			for vt in tagsv:
+				x = miss.data_log[vt][i]
+				row += x
+			w.writerow(row)
+	

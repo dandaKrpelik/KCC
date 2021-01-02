@@ -18,6 +18,7 @@ class CommandCentre(threading.Thread):
 	def __init__(self, save_game = 'KCC_save', conn_name = 'KCC'):
 		threading.Thread.__init__(self)			## CC is a background thread to allow python command line control
 		
+		print('initializing KCC server')
 		self.save_game_name = save_game
 		
 		self.KSPconnection = krpc.connect(name=conn_name)		## init KPS connection with conn_name tag
